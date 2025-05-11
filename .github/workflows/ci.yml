@@ -1,0 +1,24 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build
+      run: cargo build --release
+      
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: weixin2-exe
+        path: target/release/weixin2.exe

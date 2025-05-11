@@ -6,5 +6,10 @@ edition = "2021"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 
-[build-dependencies]
-winres = "0.1"
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+# debug = false
