@@ -1,4 +1,4 @@
-# <img src="/i:/JBCode/Rust/weixin2/Weixin2.ico" width="128" height="128"> 2Weixin - 微信分身小助手 ✨
+# <img src="Weixin2.ico" width="128" height="128"> Weixin2 - 微信分身小助手 ✨
 
 ## 🌟 主要功能 🌟
 
