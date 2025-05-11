@@ -12,6 +12,8 @@ env:
 jobs:
   build_and_release:
     runs-on: windows-latest
+    permissions: # 添加 permissions 块
+      contents: write # 授予写入仓库内容的权限，包括创建 Release 和上传 assets
 
     steps:
     - uses: actions/checkout@v4
