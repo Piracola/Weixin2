@@ -8,6 +8,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # 项目名称，用于构建产物的命名
+  PROJECT_NAME: weixin2 
 
 jobs:
   build:
@@ -15,7 +17,26 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Cache Cargo registry and target directory
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --release --verbose
+
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --verbose # 测试仍然可以使用 debug 构建，如果需要测试 release 版本，可以修改为 cargo test --release --verbose
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.PROJECT_NAME }}-${{ github.sha }} # 为产物命名，可以包含 commit SHA 以便追溯
+        path: target/release/${{ env.PROJECT_NAME }}.exe
