@@ -31,10 +31,15 @@ jobs:
           ${{ runner.os }}-cargo-
 
     - name: Build
-      run: cargo build --release --verbose
+      run: cargo build --release --verbose --bin weixin2 --bin quicklaunch
 
     - name: Run tests
       run: cargo test --release --verbose
+
+    - name: Get commit messages
+      id: get_commits
+      run: |
+        echo "COMMIT_MESSAGES=$(git log --pretty=format:'- %s' ${{ github.event.before }}..${{ github.sha }})" >> $GITHUB_OUTPUT
 
     - name: Create Release
       id: create_release
@@ -46,7 +51,9 @@ jobs:
         release_name: Release ${{ github.ref_name }} # Release 的名称
         body: |
           自动构建的 Release 版本 ${{ github.ref_name }}
-          查看提交历史以获取详细更改。
+          
+          ### 提交历史
+          ${{ steps.get_commits.outputs.COMMIT_MESSAGES }}
         draft: false
         prerelease: false # 如果是预发布版本，可以设置为 true
 
@@ -59,3 +66,13 @@ jobs:
         asset_path: ./target/release/${{ env.PROJECT_NAME }}.exe # 要上传的文件的路径
         asset_name: ${{ env.PROJECT_NAME }}-${{ github.ref_name }}.exe # 上传到 Release 的资产名称
         asset_content_type: application/vnd.microsoft.portable-executable # 可执行文件的 MIME 类型
+        
+    - name: Upload QuickLaunch Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./target/release/quicklaunch.exe
+        asset_name: quicklaunch-${{ github.ref_name }}.exe
+        asset_content_type: application/vnd.microsoft.portable-executable

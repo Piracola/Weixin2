@@ -1,25 +1,20 @@
+#![windows_subsystem = "windows"]
+
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
-use std::io::{self, Write};
 use winreg::RegKey;
 use winreg::enums::*;
-
-fn pause_with_message(message: &str) {
-    print!("{}", message);
-    io::stdout().flush().unwrap();
-    let mut _buffer = String::new();
-    io::stdin().read_line(&mut _buffer).unwrap();
-}
+use native_dialog::{MessageDialog, FileDialog};
 
 fn trim_spaces(s: &str) -> String {
     s.trim().to_string()
 }
 
 // 函数用于保存用户指定的路径到注册表
-fn save_user_specified_path(path: &Path) -> io::Result<()> {
+fn save_user_specified_path(path: &Path) -> Result<(), std::io::Error> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let launcher_subkey_path = "Software\\Weixin2Launcher";
+    let launcher_subkey_path = "Software\\QuickLauncher\\Weixin";
     let value_name = "UserSpecifiedPath";
 
     let (key, _) = hkcu.create_subkey(launcher_subkey_path)?;
@@ -59,7 +54,7 @@ fn query_registry_key(_hkey_root_name: &str, hkey: &RegKey, subkey_path: &str, v
 fn find_wechat_path(tried_paths: &mut Vec<String>) -> Option<PathBuf> {
     // 步骤 0: 检查用户上次手动指定的路径 (从本程序注册表配置)
     let hkcu_launcher = RegKey::predef(HKEY_CURRENT_USER);
-    let launcher_subkey_path = "Software\\Weixin2Launcher";
+    let launcher_subkey_path = "Software\\QuickLauncher\\Weixin";
     let launcher_value_name = "UserSpecifiedPath";
     tried_paths.push(format!("  本程序配置: HKEY_CURRENT_USER\\{}\\{}", launcher_subkey_path, launcher_value_name));
 
@@ -150,10 +145,21 @@ fn find_wechat_path(tried_paths: &mut Vec<String>) -> Option<PathBuf> {
     None
 }
 
+use std::os::windows::process::CommandExt;
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 fn launch_wechat(wechat_exe_path: &Path) {
-    match Command::new(wechat_exe_path).spawn() {
-        Ok(_) => {} // 启动命令已发出，静默处理成功情况
-        Err(e) => println!("    启动微信失败: {:?}", e),
+    match Command::new(wechat_exe_path)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn() {
+        Ok(_) => {}
+        Err(e) => {
+            MessageDialog::new()
+                .set_title("错误")
+                .set_text(&format!("启动微信失败: {:?}", e))
+                .show_alert()
+                .unwrap();
+        }
     }
 }
 
@@ -162,44 +168,50 @@ fn main() {
     let mut found_wechat_path = find_wechat_path(&mut tried_paths);
 
     if found_wechat_path.is_none() {
-        println!("\n错误：自动查找未能找到微信安装路径。");
-        println!("已尝试以下位置和注册表项:");
+        let mut error_message = "错误：自动查找未能找到微信安装路径。\n已尝试以下位置和注册表项:\n".to_string();
         for tried_path in &tried_paths {
-            println!("{}", tried_path);
+            error_message.push_str(&format!("{}\n", tried_path));
         }
         
-        print!("\n是否要手动指定 WeChat.exe 或 weixin.exe 的路径? (y/n): ");
-        io::stdout().flush().unwrap();
-        let mut user_choice = String::new();
-        io::stdin().read_line(&mut user_choice).unwrap();
-
-        if user_choice.trim().eq_ignore_ascii_case("y") {
-            print!("请输入 WeChat.exe 或 weixin.exe 的完整路径: ");
-            io::stdout().flush().unwrap();
-            let mut manual_path_str = String::new();
-            io::stdin().read_line(&mut manual_path_str).unwrap();
-            let manual_path_trimmed = manual_path_str.trim();
-
-            if !manual_path_trimmed.is_empty() {
-                let manual_path_buf = PathBuf::from(manual_path_trimmed);
-                if manual_path_buf.is_file() {
-                    if let Err(e) = save_user_specified_path(&manual_path_buf) {
-                        println!("    警告: 保存用户指定路径到注册表失败: {:?}", e);
+        let choice = MessageDialog::new()
+            .set_title("未找到微信路径")
+            .set_text(&error_message)
+            .show_confirm()
+            .unwrap_or(false);
+            
+        if choice {
+            if let Some(path) = FileDialog::new()
+                .set_title("选择微信可执行文件")
+                .add_filter("可执行文件", &["exe"])
+                .show_open_single_file()
+                .unwrap_or(None) 
+            {
+                if path.is_file() {
+                    if let Err(e) = save_user_specified_path(&path) {
+                        MessageDialog::new()
+                            .set_title("警告")
+                            .set_text(&format!("保存用户指定路径到注册表失败: {:?}", e))
+                            .show_alert()
+                            .unwrap();
                     }
-                    found_wechat_path = Some(manual_path_buf);
+                    found_wechat_path = Some(path);
                 } else {
-                    println!("  错误: 手动输入的路径 \"{}\" 无效或文件不存在。", manual_path_buf.display());
-                    pause_with_message("按任意键退出...");
-                    exit(3); 
+                    MessageDialog::new()
+                        .set_title("错误")
+                        .set_text(&format!("路径 \"{}\" 无效或文件不存在", path.display()))
+                        .show_alert()
+                        .unwrap();
+                    exit(3);
                 }
             } else {
-                println!("  错误: 未输入路径。");
-                pause_with_message("按任意键退出...");
-                exit(4); 
+                MessageDialog::new()
+                    .set_title("错误")
+                    .set_text("未选择路径")
+                    .show_alert()
+                    .unwrap();
+                exit(4);
             }
         } else {
-            println!("  用户选择不手动指定路径。");
-            pause_with_message("按任意键退出...");
             exit(1);
         }
     }
@@ -207,8 +219,11 @@ fn main() {
     match found_wechat_path {
         Some(path) => {
             if !path.is_file(){ // 再次确认路径有效性
-                println!("    警告: 找到的路径 \"{}\" 最终检测为无效! 这可能是一个错误。", path.display());
-                pause_with_message("按任意键退出...");
+            MessageDialog::new()
+                .set_title("警告")
+                .set_text(&format!("找到的路径 \"{}\" 最终检测为无效! 这可能是一个错误。", path.display()))
+                .show_alert()
+                .unwrap();
                 exit(2);
             }
             
@@ -234,19 +249,19 @@ fn main() {
                 2 // 无法获取当前执行路径，使用默认值
             };
             
-            println!("准备启动微信 {} 次...", launch_count); // 添加一些反馈
-            for i in 0..launch_count {
-                println!("  正在启动微信 (第 {} 次)...", i + 1);
+            for _i in 0..launch_count {
                 launch_wechat(&path);
             }
-            println!("所有微信启动命令已发出。程序将自动退出。"); // 修改提示信息
         }
         None => { // 此处理论上不会到达，因为前面已处理 None 的情况并退出
-            println!("  错误：最终未能找到微信安装路径。");
-            pause_with_message("按任意键退出...");
+            MessageDialog::new()
+                .set_title("错误")
+                .set_text("最终未能找到微信安装路径。")
+                .show_alert()
+                .unwrap();
             exit(5);
         }
     }
     
-    // pause_with_message("操作完成。按任意键退出脚本."); // 将此行注释掉或删除
+    
 }

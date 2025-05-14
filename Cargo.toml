@@ -3,6 +3,17 @@ name = "weixin2"
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.windows_subsystem]
+windows_subsystem = "windows"
+
+[[bin]]
+name = "weixin2"
+path = "src/main.rs"
+
+[[bin]]
+name = "quicklaunch"
+path = "src/quick_launch.rs"
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 
@@ -12,4 +23,10 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[profile.dev]
+
+[dependencies]
+native-dialog = "0.7.0"
+winapi = { version = "0.3.9", features = ["winuser", "shellscalingapi"] }
 # debug = false
