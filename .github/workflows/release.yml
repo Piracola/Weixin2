@@ -39,7 +39,7 @@ jobs:
     - name: Get commit messages
       id: get_commits
       run: |
-        echo "COMMIT_MESSAGES=$(git log --pretty=format:'- %s' ${{ github.event.before }}..${{ github.sha }})" >> $GITHUB_OUTPUT
+        echo "COMMIT_MESSAGES=$(git log --pretty=format:'- %s' $(git describe --abbrev=0 --tags ${{ github.ref_name }}^)..${{ github.ref_name }})" >> $GITHUB_OUTPUT
 
     - name: Create Release
       id: create_release
