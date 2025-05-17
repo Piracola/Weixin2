@@ -1,5 +1,6 @@
 # <img src="Weixin2.ico" width="128" height="128"> Weixin2 - 微信分身小助手 ✨
 
+## 一个完全使用AI编写的小工具
 ## 🌟 主要功能 🌟
 
 *   🔍 **智能路径检测**: 自动找到微信 (`WeChat.exe` 或 `weixin.exe`) 的安装位置。
