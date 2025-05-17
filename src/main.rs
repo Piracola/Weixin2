@@ -7,59 +7,62 @@ use winreg::RegKey;
 use winreg::enums::*;
 use native_dialog::{MessageDialog, FileDialog};
 
+fn show_alert(title: &str, text: &str) {
+    MessageDialog::new()
+        .set_title(title)
+        .set_text(text)
+        .show_alert()
+        .unwrap_or_else(|_| ());
+}
+
 fn trim_spaces(s: &str) -> String {
     s.trim().to_string()
 }
 
 // 函数用于保存用户指定的路径到注册表
+const LAUNCHER_SUBKEY: &str = "Software\\QuickLauncher\\Weixin";
+const USER_SPECIFIED_PATH_VALUE: &str = "UserSpecifiedPath";
+
 fn save_user_specified_path(path: &Path) -> Result<(), std::io::Error> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let launcher_subkey_path = "Software\\QuickLauncher\\Weixin";
-    let value_name = "UserSpecifiedPath";
 
-    let (key, _) = hkcu.create_subkey(launcher_subkey_path)?;
+    let (key, _) = hkcu.create_subkey(LAUNCHER_SUBKEY)?;
     let path_str = path.to_string_lossy().into_owned();
-    key.set_value(value_name, &path_str)?;
+    key.set_value(USER_SPECIFIED_PATH_VALUE, &path_str)?;
     Ok(())
 }
 
 // 查询注册表项
 // _hkey_root_name 参数当前未使用，但保留以表示其来源
-fn query_registry_key(_hkey_root_name: &str, hkey: &RegKey, subkey_path: &str, value_name: &str) -> Option<PathBuf> {
-    if let Ok(subkey) = hkey.open_subkey(subkey_path) {
-        if let Ok(install_path_raw) = subkey.get_value::<String, _>(value_name) {
-            let install_path_trimmed = trim_spaces(&install_path_raw);
-            if !install_path_trimmed.is_empty() {
-                let base_path = PathBuf::from(install_path_trimmed);
-
-                // 情况1: 注册表中的路径直接指向 .exe 文件
-                if base_path.is_file() && base_path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("exe")) {
-                    return Some(base_path);
-                } else {
-                    // 情况2: 注册表中的路径是一个目录，尝试附加常见的可执行文件名
-                    let exe_names_to_try = ["WeChat.exe", "weixin.exe"];
-                    for exe_name in exe_names_to_try.iter() {
-                        let potential_path = base_path.join(exe_name);
-                        if potential_path.is_file() { // is_file() 会检查存在性和是否为文件
-                            return Some(potential_path);
-                        }
-                    }
-                }
-            }
-        }
+fn query_registry_key(hkey: &RegKey, subkey_path: &str, value_name: &str) -> Option<PathBuf> {
+    let subkey = hkey.open_subkey(subkey_path).ok()?;
+    let install_path_raw = subkey.get_value::<String, _>(value_name).ok()?;
+    let install_path_trimmed = trim_spaces(&install_path_raw);
+    if install_path_trimmed.is_empty() {
+        return None;
     }
-    None
+
+    let base_path = PathBuf::from(install_path_trimmed);
+    
+    // 情况1: 注册表中的路径直接指向 .exe 文件
+    if base_path.is_file() && base_path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("exe")) {
+        return Some(base_path);
+    }
+    
+    // 情况2: 注册表中的路径是一个目录，尝试附加常见的可执行文件名
+    let exe_names_to_try = ["WeChat.exe", "weixin.exe"];
+    exe_names_to_try.iter()
+        .map(|exe_name| base_path.join(exe_name))
+        .find(|path| path.is_file())
 }
 
 fn find_wechat_path(tried_paths: &mut Vec<String>) -> Option<PathBuf> {
     // 步骤 0: 检查用户上次手动指定的路径 (从本程序注册表配置)
     let hkcu_launcher = RegKey::predef(HKEY_CURRENT_USER);
-    let launcher_subkey_path = "Software\\QuickLauncher\\Weixin";
-    let launcher_value_name = "UserSpecifiedPath";
-    tried_paths.push(format!("  本程序配置: HKEY_CURRENT_USER\\{}\\{}", launcher_subkey_path, launcher_value_name));
+    tried_paths.push(format!("  本程序配置: HKEY_CURRENT_USER\\{}\\{}", LAUNCHER_SUBKEY, USER_SPECIFIED_PATH_VALUE));
 
-    if let Ok(subkey) = hkcu_launcher.open_subkey(launcher_subkey_path) {
-        if let Ok(saved_path_str) = subkey.get_value::<String, _>(launcher_value_name) {
+    if let Ok(subkey) = hkcu_launcher.open_subkey(LAUNCHER_SUBKEY) {
+        if let Ok(saved_path_str) = subkey.get_value::<String, _>(USER_SPECIFIED_PATH_VALUE) {
             let saved_path_trimmed = trim_spaces(&saved_path_str);
             if !saved_path_trimmed.is_empty() {
                 let wechat_path = PathBuf::from(saved_path_trimmed);
@@ -75,56 +78,14 @@ fn find_wechat_path(tried_paths: &mut Vec<String>) -> Option<PathBuf> {
     let weixin_subkey_path = "Software\\Tencent\\Weixin";
     
     tried_paths.push(format!("  默认注册表: HKEY_CURRENT_USER\\{}\\InstallPath", weixin_subkey_path));
-    if let Some(path) = query_registry_key("HKEY_CURRENT_USER", &hkcu_tencent_weixin, weixin_subkey_path, "InstallPath") {
+    if let Some(path) = query_registry_key(&hkcu_tencent_weixin, weixin_subkey_path, "InstallPath") {
         return Some(path);
     }
     tried_paths.push(format!("  默认注册表: HKEY_CURRENT_USER\\{}\\Path", weixin_subkey_path)); // 也检查 "Path"
-    if let Some(path) = query_registry_key("HKEY_CURRENT_USER", &hkcu_tencent_weixin, weixin_subkey_path, "Path") {
+    if let Some(path) = query_registry_key(&hkcu_tencent_weixin, weixin_subkey_path, "Path") {
         return Some(path);
     }
 
-    // 步骤 2: 检查常见的安装路径
-    let mut common_paths_to_check: Vec<(&str, Box<dyn Fn() -> Option<PathBuf>>)> = Vec::new();
-
-    // 旧版 WeChat 路径
-    common_paths_to_check.push(("%ProgramFiles(x86)%\\Tencent\\WeChat\\WeChat.exe", Box::new(|| {
-        env::var("ProgramFiles(x86)").ok().map(|p| PathBuf::from(p).join("Tencent\\WeChat\\WeChat.exe"))
-    })));
-    common_paths_to_check.push(("%ProgramFiles%\\Tencent\\WeChat\\WeChat.exe", Box::new(|| {
-        env::var("ProgramFiles").ok().map(|p| PathBuf::from(p).join("Tencent\\WeChat\\WeChat.exe"))
-    })));
-    common_paths_to_check.push(("%LOCALAPPDATA%\\Programs\\Tencent\\WeChat\\WeChat.exe", Box::new(|| {
-        env::var("LOCALAPPDATA").ok().map(|p| PathBuf::from(p).join("Programs\\Tencent\\WeChat\\WeChat.exe"))
-    })));
-    
-    // 新版 Weixin (4.0+) 路径
-    common_paths_to_check.push(("%ProgramFiles(x86)%\\Tencent\\Weixin\\weixin.exe", Box::new(|| {
-        env::var("ProgramFiles(x86)").ok().map(|p| PathBuf::from(p).join("Tencent\\Weixin\\weixin.exe"))
-    })));
-    common_paths_to_check.push(("%ProgramFiles%\\Tencent\\Weixin\\weixin.exe", Box::new(|| {
-        env::var("ProgramFiles").ok().map(|p| PathBuf::from(p).join("Tencent\\Weixin\\weixin.exe"))
-    })));
-    common_paths_to_check.push(("%LOCALAPPDATA%\\Programs\\Tencent\\Weixin\\weixin.exe", Box::new(|| {
-        env::var("LOCALAPPDATA").ok().map(|p| PathBuf::from(p).join("Programs\\Tencent\\Weixin\\weixin.exe"))
-    })));
-    
-    // 示例自定义路径 (保留用户原有的)
-    common_paths_to_check.push(("D:\\Program Files\\Tencent\\WeChat\\WeChat.exe", Box::new(|| {
-        Some(PathBuf::from("D:\\Program Files\\Tencent\\WeChat\\WeChat.exe"))
-    })));
-    common_paths_to_check.push(("D:\\Program Files\\Tencent\\Weixin\\weixin.exe", Box::new(|| {
-        Some(PathBuf::from("D:\\Program Files\\Tencent\\Weixin\\weixin.exe"))
-    })));
-
-    for (description, path_fn) in common_paths_to_check {
-        tried_paths.push(format!("  位置: {}", description));
-        if let Some(path) = path_fn() {
-            if path.is_file() {
-                return Some(path);
-            }
-        }
-    }
-    
     // 步骤 3: 尝试从其他微信官方的本地计算机注册表查询微信路径
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
@@ -137,7 +98,7 @@ fn find_wechat_path(tried_paths: &mut Vec<String>) -> Option<PathBuf> {
 
     for (subkey, value_name) in hklm_paths_to_check.iter() {
         tried_paths.push(format!("  注册表: HKEY_LOCAL_MACHINE\\{}\\{}", subkey, value_name));
-        if let Some(path) = query_registry_key("HKEY_LOCAL_MACHINE", &hklm, subkey, value_name) {
+        if let Some(path) = query_registry_key(&hklm, subkey, value_name) {
             return Some(path);
         }
     }
@@ -154,11 +115,7 @@ fn launch_wechat(wechat_exe_path: &Path) {
         .spawn() {
         Ok(_) => {}
         Err(e) => {
-            MessageDialog::new()
-                .set_title("错误")
-                .set_text(&format!("启动微信失败: {:?}", e))
-                .show_alert()
-                .unwrap();
+            show_alert("错误", &format!("启动微信失败: {:?}", e));
         }
     }
 }
@@ -188,27 +145,15 @@ fn main() {
             {
                 if path.is_file() {
                     if let Err(e) = save_user_specified_path(&path) {
-                        MessageDialog::new()
-                            .set_title("警告")
-                            .set_text(&format!("保存用户指定路径到注册表失败: {:?}", e))
-                            .show_alert()
-                            .unwrap();
+                        show_alert("警告", &format!("保存用户指定路径到注册表失败: {:?}", e));
                     }
                     found_wechat_path = Some(path);
                 } else {
-                    MessageDialog::new()
-                        .set_title("错误")
-                        .set_text(&format!("路径 \"{}\" 无效或文件不存在", path.display()))
-                        .show_alert()
-                        .unwrap();
+                    show_alert("错误", &format!("路径 \"{}\" 无效或文件不存在", path.display()));
                     exit(3);
                 }
             } else {
-                MessageDialog::new()
-                    .set_title("错误")
-                    .set_text("未选择路径")
-                    .show_alert()
-                    .unwrap();
+                show_alert("错误", "未选择路径");
                 exit(4);
             }
         } else {
@@ -219,49 +164,21 @@ fn main() {
     match found_wechat_path {
         Some(path) => {
             if !path.is_file(){ // 再次确认路径有效性
-            MessageDialog::new()
-                .set_title("警告")
-                .set_text(&format!("找到的路径 \"{}\" 最终检测为无效! 这可能是一个错误。", path.display()))
-                .show_alert()
-                .unwrap();
+            show_alert("警告", &format!("找到的路径 \"{}\" 最终检测为无效! 这可能是一个错误。", path.display()));
                 exit(2);
             }
             
-            let launch_count = if let Ok(current_exe_path) = env::current_exe() {
-                if let Some(file_stem_osstr) = current_exe_path.file_stem() {
-                    if let Some(file_stem_str) = file_stem_osstr.to_str() {
-                        if let Ok(num) = file_stem_str.parse::<u32>() {
-                            if num >= 1 && num <= 10 {
-                                num // 使用文件名数字 (1-10)
-                            } else {
-                                2 // 文件名数字无效 (0 或 >10)，使用默认值
-                            }
-                        } else {
-                            2 // 文件名不是纯数字，使用默认值
-                        }
-                    } else {
-                        2 // 无法转换文件名，使用默认值
-                    }
-                } else {
-                    2 // 无法获取文件名，使用默认值
-                }
-            } else {
-                2 // 无法获取当前执行路径，使用默认值
-            };
+            let launch_count = env::current_exe()
+                .ok()
+                .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+                .and_then(|s| s.parse::<u32>().ok())
+                .filter(|&n| n >= 1 && n <= 10)
+                .unwrap_or(2);
             
             for _i in 0..launch_count {
                 launch_wechat(&path);
             }
-        }
-        None => { // 此处理论上不会到达，因为前面已处理 None 的情况并退出
-            MessageDialog::new()
-                .set_title("错误")
-                .set_text("最终未能找到微信安装路径。")
-                .show_alert()
-                .unwrap();
-            exit(5);
-        }
+        },
+        None => exit(5)
     }
-    
-    
 }

@@ -49,10 +49,9 @@ fn launch_shortcuts(dir: &Path) -> io::Result<()> {
         })
         .collect::<Vec<_>>();
 
-    let mut handles = Vec::new();
-    for entry in entries {
+    let handles = entries.into_iter().map(|entry| {
         let path = entry.path();
-        handles.push(std::thread::spawn(move || {
+        std::thread::spawn(move || {
             unsafe {
                 use winapi::um::shellapi::ShellExecuteW;
                 use std::ffi::OsStr;
@@ -87,117 +86,79 @@ fn launch_shortcuts(dir: &Path) -> io::Result<()> {
                         32 => "DDE建议超时",
                         _ => "未知错误"
                     };
-                    MessageDialog::new()
-                        .set_title("错误")
-                        .set_text(&format!("启动快捷方式失败: {}\n文件: {:?}\n错误代码: {}", error_msg, path, result as usize))
-                        .show_alert()
-                        .unwrap_or_else(|_| ());
+                    show_dialog("错误", &format!("启动快捷方式失败: {}\n文件: {:?}\n错误代码: {}", error_msg, path, result as usize));
                 }
             }
-        }));
-    }
+        })
+    }).collect::<Vec<_>>();
 
     // 等待所有线程完成
-    for handle in handles {
-        handle.join().unwrap_or_else(|_| ());
-    }
+    handles.into_iter().for_each(|h| { h.join().unwrap_or_else(|_| ()); });
 
     Ok(())
 }
 
 fn prompt_for_directory() -> Option<PathBuf> {
-    // 先显示确认对话框
-    let confirmed = match MessageDialog::new()
+    // 显示确认对话框
+    let confirmed = MessageDialog::new()
         .set_title("选择快捷方式目录")
         .set_text("请选择包含快捷方式的目录")
-        .show_confirm() {
-            Ok(c) => c,
-            Err(e) => {
-                MessageDialog::new()
-    .set_title("错误")
-    .set_text(&format!("显示对话框失败: {}", e))
-    .show_alert()
-    .unwrap_or_else(|_| ());
-                return None;
-            }
-        };
+        .show_confirm()
+        .map_err(|e| {
+            show_dialog("错误", &format!("显示对话框失败: {}", e));
+            e
+        })
+        .ok()?;
 
     if !confirmed {
         return None;
     }
 
-    // 确认后显示目录选择对话框
-    match FileDialog::new()
+    // 显示目录选择对话框
+    FileDialog::new()
         .set_title("选择快捷方式目录")
-        .show_open_single_dir() {
-            Ok(Some(path)) => Some(path),
-            Ok(None) => None,
-            Err(e) => {
-                MessageDialog::new()
-    .set_title("错误")
-    .set_text(&format!("选择目录失败: {}", e))
-    .show_alert()
-    .unwrap_or_else(|_| ()); // 静默处理对话框本身的显示错误
-                None
-            }
-        }
+        .show_open_single_dir()
+        .map_err(|e| {
+            show_dialog("错误", &format!("选择目录失败: {}", e));
+            e
+        })
+        .ok()?
+}
+
+fn show_dialog(title: &str, message: &str) {
+    MessageDialog::new()
+        .set_title(title)
+        .set_text(message)
+        .show_alert()
+        .unwrap_or_else(|_| ());
 }
 
 fn main() {
-    unsafe {
-        SetProcessDPIAware();
-    }
+    unsafe { SetProcessDPIAware(); }
+    
     match get_shortcut_dir() {
         Ok(Some(dir)) => {
             if let Err(e) = launch_shortcuts(&dir) {
-                MessageDialog::new()
-    .set_title("错误")
-    .set_text(&format!("启动快捷方式时出错: {}", e))
-    .show_alert()
-    .unwrap_or_else(|_| ());
+                show_dialog("错误", &format!("启动快捷方式时出错: {}", e));
             }
             return;
         },
-        Err(e) => {
-        MessageDialog::new()
-            .set_title("错误")
-            .set_text(&format!("读取注册表时出错: {}", e))
-            .show_alert()
-            .unwrap_or_else(|_| ()); // 静默处理对话框本身的显示错误
-    },
+        Err(e) => show_dialog("错误", &format!("读取注册表时出错: {}", e)),
         _ => ()
     }
 
-    MessageDialog::new()
-    .set_title("提示")
-    .set_text("首次运行，请选择快捷方式目录")
-    .show_alert()
-    .unwrap_or_else(|_| ()); // 静默处理对话框本身的显示错误
+    show_dialog("提示", "首次运行，请选择快捷方式目录");
     
     if let Some(dir_path) = prompt_for_directory() {
         match save_shortcut_dir(dir_path.as_path()) {
             Ok(_) => {
                 if let Err(e) = launch_shortcuts(&dir_path) {
-                    MessageDialog::new()
-    .set_title("错误")
-    .set_text(&format!("启动快捷方式时出错: {}", e))
-    .show_alert()
-    .unwrap_or_else(|_| ());
+                    show_dialog("错误", &format!("启动快捷方式时出错: {}", e));
                 }
             },
-            Err(e) => {
-                MessageDialog::new()
-                    .set_title("错误")
-                    .set_text(&format!("保存目录到注册表失败: {}", e))
-                    .show_alert()
-                    .unwrap_or_else(|_| ()); // 静默处理对话框本身的显示错误
-            }
+            Err(e) => show_dialog("错误", &format!("保存目录到注册表失败: {}", e))
         }
     } else {
-        MessageDialog::new()
-    .set_title("提示")
-    .set_text("未选择目录，程序退出")
-    .show_alert()
-    .unwrap_or_else(|_| ()); // 静默处理对话框本身的显示错误
+        show_dialog("提示", "未选择目录，程序退出");
     }
 }
